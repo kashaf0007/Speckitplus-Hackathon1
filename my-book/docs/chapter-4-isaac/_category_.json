@@ -1,0 +1,8 @@
+{
+  "label": "4. NVIDIA Isaac",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "GPU-accelerated simulation, synthetic data generation, and AI training with NVIDIA Isaac."
+  }
+}

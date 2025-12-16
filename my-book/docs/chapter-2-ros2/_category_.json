@@ -1,0 +1,8 @@
+{
+  "label": "2. ROS 2 Fundamentals",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Building robust robot software with the Robot Operating System 2 middleware."
+  }
+}

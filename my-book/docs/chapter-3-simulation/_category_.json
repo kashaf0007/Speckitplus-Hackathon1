@@ -1,0 +1,8 @@
+{
+  "label": "3. Simulation (Gazebo & Unity)",
+  "position": 4,
+  "link": {
+    "type": "generated-index",
+    "description": "Mastering robot simulation with Gazebo Sim and Unity for safe development and testing."
+  }
+}

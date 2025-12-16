@@ -1,0 +1,8 @@
+{
+  "label": "6. Capstone Project",
+  "position": 7,
+  "link": {
+    "type": "generated-index",
+    "description": "Building an autonomous humanoid robot that responds to voice commands."
+  }
+}
