@@ -7,7 +7,7 @@
  * Integrates useTextSelection hook to capture user text selection.
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode, JSX } from 'react';
 import { useBackendApi } from './useBackendApi';
 import { useTextSelection } from './useTextSelection';
 import type {
