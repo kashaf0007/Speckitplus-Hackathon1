@@ -1,0 +1,100 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+Backend/.venv/
+
+# Testing
+.coverage
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+coverage.xml
+*.cover
+Backend/.pytest_cache/
+Backend/tests/
+
+# Environment files
+.env
+.env.*
+!.env.example
+Backend/.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.bak
+nul
+
+# Node.js/Frontend
+node_modules/
+my-book/node_modules/
+my-book/.docusaurus/
+my-book/build/
+my-book/.cache/
+package-lock.json
+my-book/package-lock.json
+
+# Documentation & Specs (not needed in container)
+docs/
+*.md
+!README.md
+specs/
+history/
+.specify/
+
+# Test output files
+Backend/test_*.txt
+Backend/test_*.json
+
+# Lock files (rebuild in container)
+Backend/uv.lock
+
+# Misc artifacts
+Backend/=*
