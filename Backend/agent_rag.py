@@ -10,10 +10,12 @@ import logging
 import time
 import asyncio
 import hashlib
+import random
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
 from dotenv import load_dotenv
 
 from models.agent_models import AskRequest, AskResponse, ChunkReference
@@ -27,8 +29,12 @@ logger = logging.getLogger(__name__)
 
 # Timeout configurations (in seconds)
 QDRANT_TIMEOUT = 10  # T051: 10s timeout for Qdrant operations
-GEMINI_TIMEOUT = 15  # T051: 15s timeout for Gemini generation
+GEMINI_TIMEOUT = 30  # T051: 30s timeout for Gemini generation (increased for retries)
 COHERE_TIMEOUT = 10  # T051: 10s timeout for Cohere embedding
+
+# Retry configuration for rate limits
+MAX_RETRIES = 3
+BASE_RETRY_DELAY = 2  # Base delay in seconds for exponential backoff
 
 
 # System prompt with constraints for book-grounded answers
@@ -339,25 +345,47 @@ class AgentOrchestrator:
 **ANSWER**:"""
 
         try:
-            # T050/T051: Generate response with timeout
+            # T050/T051: Generate response with timeout and retry logic for rate limits
             # Use asyncio.to_thread for non-blocking execution of sync Gemini call
-            async def generate_with_timeout():
-                return await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.model.generate_content,
-                        prompt,
-                        generation_config=self.generation_config
-                    ),
-                    timeout=GEMINI_TIMEOUT
-                )
+            async def generate_with_retry():
+                last_exception = None
+                for attempt in range(MAX_RETRIES):
+                    try:
+                        return await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self.model.generate_content,
+                                prompt,
+                                generation_config=self.generation_config
+                            ),
+                            timeout=GEMINI_TIMEOUT
+                        )
+                    except ResourceExhausted as e:
+                        last_exception = e
+                        # Extract retry delay from error if available, otherwise use exponential backoff
+                        retry_delay = BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                        logger.warning(f"[{question_hash}] Rate limit hit (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {retry_delay:.1f}s")
+                        await asyncio.sleep(retry_delay)
+                    except asyncio.TimeoutError:
+                        logger.error(f"[{question_hash}] Gemini generation timed out after {GEMINI_TIMEOUT}s")
+                        raise TimeoutError(f"Answer generation timed out after {GEMINI_TIMEOUT} seconds")
+
+                # All retries exhausted
+                logger.error(f"[{question_hash}] Rate limit exceeded after {MAX_RETRIES} retries")
+                raise last_exception
 
             try:
-                response = await generate_with_timeout()
+                response = await generate_with_retry()
             except asyncio.TimeoutError:
                 logger.error(f"[{question_hash}] Gemini generation timed out after {GEMINI_TIMEOUT}s")
                 raise TimeoutError(f"Answer generation timed out after {GEMINI_TIMEOUT} seconds")
 
-            raw_answer = response.text.strip()
+            # Handle blocked or empty responses from Gemini
+            try:
+                raw_answer = response.text.strip()
+            except ValueError:
+                # Response was blocked by safety filters or no valid part returned
+                logger.warning(f"[{question_hash}] Gemini response blocked or empty, using fallback")
+                raw_answer = "This information is not available in the book."
 
             # T048: Post-process the answer
             answer_text = self._post_process_answer(raw_answer)

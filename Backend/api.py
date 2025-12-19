@@ -22,6 +22,7 @@ from chatbot import query_chatbot, cohere_client, qdrant_client
 from retrieval_validation import validate_retrieval
 from agent_rag import AgentOrchestrator, NoAnswerFoundError
 from models.agent_models import AskRequest, AskResponse
+from rate_limiter import get_rate_limiter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -95,7 +96,7 @@ app = FastAPI(
 # Add CORS middleware
 # T058 Security: Restrict CORS in production - configure via environment variable
 import os
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:8000,http://127.0.0.1:8000").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -281,16 +282,45 @@ async def ask(request: AskRequest):
     try:
         logger.info(f"Received /ask request: question='{request.question[:50]}...', has_selected_text={bool(request.selected_text)}")
 
+        # Check rate limiter before processing
+        rate_limiter = get_rate_limiter()
+        can_proceed, rate_limit_error = await rate_limiter.acquire()
+
+        if not can_proceed:
+            logger.warning(f"Request rate limited: {rate_limit_error}")
+            raise HTTPException(
+                status_code=429,
+                detail=rate_limit_error or "Too many requests. Please wait a moment."
+            )
+
         # Initialize agent orchestrator
         orchestrator = AgentOrchestrator()
 
         # Prepare context (routing: selected text vs retrieval)
         try:
+            # Validator wrapper to convert Qdrant ScoredPoint objects to dict format
+            def qdrant_to_validation_chunks(query, qdrant_points):
+                """Convert Qdrant ScoredPoint objects to validation-compatible dicts."""
+                chunks = [
+                    {
+                        "chunk_id": str(point.id),
+                        "text": point.payload.get("text", ""),
+                        "metadata": {
+                            "chapter": point.payload.get("chapter"),
+                            "section": point.payload.get("section"),
+                            "source_url": point.payload.get("source_url", ""),
+                        },
+                        "score": point.score if hasattr(point, 'score') else None
+                    }
+                    for point in qdrant_points
+                ]
+                return validate_retrieval(query, chunks)
+
             context = orchestrator.prepare_context(
                 request,
                 cohere_client=cohere_client,
                 qdrant_client=qdrant_client,
-                validator=lambda q, chunks: validate_retrieval(q, chunks)
+                validator=qdrant_to_validation_chunks
             )
             logger.info(f"Context prepared: type={context.context_type}, sources={len(context.source_metadata)}")
 
@@ -341,6 +371,27 @@ async def ask(request: AskRequest):
 
         except Exception as e:
             logger.error(f"Answer generation error: {e}", exc_info=True)
+            # Check for rate limit / quota exceeded errors
+            error_str = str(e).lower()
+            if "429" in str(e) or "quota" in error_str or "rate" in error_str or "resourceexhausted" in error_str:
+                # Mark rate limiter as limited to prevent further requests
+                rate_limiter = get_rate_limiter()
+                # Extract retry delay if available, default to 60 seconds
+                retry_after = 60.0
+                if "retry in" in error_str:
+                    try:
+                        import re
+                        match = re.search(r'retry in (\d+)', error_str)
+                        if match:
+                            retry_after = float(match.group(1))
+                    except Exception:
+                        pass
+                rate_limiter.record_failure(is_rate_limit=True, retry_after=retry_after)
+
+                raise HTTPException(
+                    status_code=429,
+                    detail="API rate limit exceeded. Please wait a moment and try again."
+                )
             raise HTTPException(
                 status_code=500,
                 detail="Unable to generate answer. Please try again."
@@ -393,6 +444,17 @@ async def query(request: QueryRequest):
             status_code=500,
             detail="Query processing failed. Please try again later."
         )
+
+
+@app.get("/rate-limit-status", response_model=dict, tags=["health"], summary="Get rate limiter status")
+async def rate_limit_status():
+    """
+    Get current rate limiter status.
+
+    Returns information about API usage and rate limiting status.
+    """
+    rate_limiter = get_rate_limiter()
+    return rate_limiter.get_status()
 
 
 @app.get("/stats", response_model=dict, tags=["health"], summary="Get Qdrant collection statistics")

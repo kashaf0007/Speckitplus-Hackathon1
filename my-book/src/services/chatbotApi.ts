@@ -10,7 +10,7 @@
 import type { AskRequest, AskResponse } from '../types/chatbot';
 
 const API_BASE_URL = 'http://localhost:8000';
-const REQUEST_TIMEOUT = 5000; // 5 seconds
+const REQUEST_TIMEOUT = 60000; // 60 seconds - increased for slow API calls
 
 /**
  * Error types for classification
@@ -60,6 +60,14 @@ function classifyError(error: any, response?: Response): ClassifiedError {
       return {
         type: ErrorType.BAD_REQUEST,
         message: error.message || 'Invalid request. Please check your question.',
+        originalError: error,
+      };
+    }
+
+    if (response.status === 429) {
+      return {
+        type: ErrorType.SERVER_ERROR,
+        message: 'API rate limit reached. Please wait a moment and try again.',
         originalError: error,
       };
     }
