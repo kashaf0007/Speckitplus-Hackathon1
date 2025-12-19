@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pip uninstall onnxruntime -y)",
+      "Bash(pip install:*)",
+      "Bash(where:*)"
+    ]
+  }
+}

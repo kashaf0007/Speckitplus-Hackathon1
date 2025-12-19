@@ -1,0 +1,302 @@
+openapi: 3.0.3
+info:
+  title: Book RAG Chatbot - Agent API
+  description: |
+    Controlled RAG agent that answers user questions strictly from book content.
+
+    Features:
+    - Answers questions using retrieved book chunks from Qdrant
+    - Supports selected-text override for context-limited answering
+    - Enforces 0% hallucination rate through strict book-grounding
+    - Single-turn stateless interactions
+
+    Related Features:
+    - 002-content-embedding-pipeline: Content indexing in Qdrant
+    - 003-retrieval-validation: Chunk relevance validation
+  version: 1.0.0
+  contact:
+    name: Book RAG Chatbot API
+    email: support@example.com
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server
+
+paths:
+  /ask:
+    post:
+      summary: Ask a question about the book
+      description: |
+        Submit a question to the RAG agent and receive an answer grounded strictly in book content.
+
+        **Behavior**:
+        - If `selected_text` is provided, the agent answers only from that text (no retrieval)
+        - Otherwise, the system:
+          1. Embeds the question using Cohere
+          2. Retrieves relevant chunks from Qdrant
+          3. Validates retrieval quality (003-retrieval-validation)
+          4. Generates answer using OpenAI Agent
+        - If no answer found, returns exact message: "This information is not available in the book."
+
+        **Performance**:
+        - Target: <5 seconds end-to-end
+        - Typical: 2-4 seconds for standard queries
+
+        **Constraints**:
+        - Question max length: 1000 characters
+        - Selected text max length: 10000 characters
+        - Answer length: 1-5 sentences (typically 50-200 words)
+      operationId: askQuestion
+      tags:
+        - Agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+            examples:
+              standard_query:
+                summary: Standard question (triggers retrieval)
+                value:
+                  question: "What is the main theme of Chapter 3?"
+                  selected_text: null
+              selected_text_query:
+                summary: Question about selected text (skips retrieval)
+                value:
+                  question: "Explain this passage"
+                  selected_text: "The author describes the process of photosynthesis in detail, explaining how chlorophyll captures light energy and converts it to chemical energy stored in glucose molecules."
+              out_of_scope_query:
+                summary: Out-of-scope question (should trigger refusal)
+                value:
+                  question: "What's the weather today?"
+                  selected_text: null
+      responses:
+        '200':
+          description: Successful response with answer or refusal message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AskResponse'
+              examples:
+                successful_answer:
+                  summary: Answer found in book
+                  value:
+                    answer: "Chapter 3 explores the theme of resilience through the protagonist's journey of overcoming adversity and finding inner strength."
+                    sources: ["chunk_123", "chunk_124"]
+                    matched_chunks:
+                      - chunk_id: "chunk_123"
+                        text: "The protagonist faces significant challenges in Chapter 3, including personal loss and professional setbacks."
+                        page: 45
+                        chapter: "Chapter 3"
+                        section: "Rising Action"
+                      - chunk_id: "chunk_124"
+                        text: "Despite these setbacks, the character demonstrates remarkable resilience and determination."
+                        page: 47
+                        chapter: "Chapter 3"
+                        section: "Climax"
+                    grounded: true
+                    retrieval_quality: "Good"
+                selected_text_answer:
+                  summary: Answer from selected text
+                  value:
+                    answer: "This passage describes photosynthesis as the process by which plants convert light energy into chemical energy using chlorophyll."
+                    sources: ["selected_text"]
+                    matched_chunks:
+                      - chunk_id: "selected_text"
+                        text: "The author describes the process of photosynthesis in detail, explaining how chlorophyll captures light energy..."
+                        page: null
+                        chapter: null
+                        section: null
+                    grounded: true
+                    retrieval_quality: null
+                refusal_message:
+                  summary: Answer not found (out-of-scope or missing)
+                  value:
+                    answer: "This information is not available in the book."
+                    sources: []
+                    matched_chunks: []
+                    grounded: false
+                    retrieval_quality: "Poor"
+        '400':
+          description: Bad request (validation error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                empty_question:
+                  summary: Empty question
+                  value:
+                    error: "Validation error"
+                    detail: "Question must not be empty"
+                question_too_long:
+                  summary: Question exceeds length limit
+                  value:
+                    error: "Validation error"
+                    detail: "Question exceeds 1000 character limit"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                qdrant_unavailable:
+                  summary: Qdrant database unavailable
+                  value:
+                    error: "Service unavailable"
+                    detail: "Unable to search the book. Please try again later."
+                openai_error:
+                  summary: OpenAI API error
+                  value:
+                    error: "Generation error"
+                    detail: "Unable to generate answer. Please try again."
+        '503':
+          description: Service temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                rate_limit:
+                  summary: Rate limit exceeded
+                  value:
+                    error: "Rate limit exceeded"
+                    detail: "Too many requests. Please try again in a moment."
+
+components:
+  schemas:
+    AskRequest:
+      type: object
+      required:
+        - question
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: User's question about the book content
+          example: "What is the main theme of Chapter 3?"
+        selected_text:
+          type: string
+          nullable: true
+          maxLength: 10000
+          description: |
+            Optional user-highlighted text from the book. When provided, the agent answers
+            exclusively from this text without querying Qdrant. Takes absolute priority over retrieval.
+          example: null
+
+    AskResponse:
+      type: object
+      required:
+        - answer
+        - sources
+        - matched_chunks
+        - grounded
+      properties:
+        answer:
+          type: string
+          description: |
+            Agent's generated answer (1-5 sentences) or refusal message.
+            If answer not found: "This information is not available in the book."
+          example: "Chapter 3 explores the theme of resilience through the protagonist's journey."
+        sources:
+          type: array
+          items:
+            type: string
+          description: |
+            List of source identifiers used to generate the answer.
+            - For retrieved chunks: chunk IDs from Qdrant (e.g., "chunk_123")
+            - For selected text: ["selected_text"]
+            - For refusal: [] (empty array)
+          example: ["chunk_123", "chunk_124"]
+        matched_chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChunkReference'
+          description: |
+            Full details of chunks used in the answer, including text and metadata.
+            Aligns with sources array. Empty if answer not found.
+        grounded:
+          type: boolean
+          description: |
+            Indicates whether the answer is grounded in book content.
+            - true: Answer based on book content
+            - false: Refusal message (answer not found)
+          example: true
+        retrieval_quality:
+          type: string
+          nullable: true
+          enum: ["Good", "Partial", "Poor"]
+          description: |
+            Quality assessment from retrieval validation assistant (003-retrieval-validation).
+            - Good: Retrieved chunks directly and comprehensively address the question
+            - Partial: Some relevant information but gaps exist
+            - Poor: Retrieved chunks are irrelevant or insufficient
+            - null: Not applicable (used selected text instead of retrieval)
+          example: "Good"
+
+    ChunkReference:
+      type: object
+      required:
+        - chunk_id
+        - text
+      properties:
+        chunk_id:
+          type: string
+          description: |
+            Unique identifier for the chunk.
+            - From Qdrant: chunk ID from database
+            - For selected text: "selected_text"
+          example: "chunk_123"
+        text:
+          type: string
+          maxLength: 2000
+          description: |
+            Full text of the chunk. Truncated to 2000 characters if longer (with "..." indicator).
+          example: "The protagonist faces significant challenges in Chapter 3, including personal loss and professional setbacks."
+        page:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: |
+            Page number in the book where this chunk appears.
+            null if:
+            - Web content (no page numbers)
+            - Selected text (page unknown)
+            - Metadata not available
+          example: 45
+        chapter:
+          type: string
+          nullable: true
+          description: |
+            Chapter name or number. null if metadata not available.
+          example: "Chapter 3"
+        section:
+          type: string
+          nullable: true
+          description: |
+            Section name within the chapter. null if metadata not available.
+          example: "Rising Action"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - detail
+      properties:
+        error:
+          type: string
+          description: Error category (e.g., "Validation error", "Service unavailable")
+          example: "Validation error"
+        detail:
+          type: string
+          description: Human-readable error message explaining what went wrong
+          example: "Question must not be empty"
+
+tags:
+  - name: Agent
+    description: RAG agent endpoints for question answering

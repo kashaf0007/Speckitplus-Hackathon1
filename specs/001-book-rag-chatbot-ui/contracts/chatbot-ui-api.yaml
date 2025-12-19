@@ -1,0 +1,328 @@
+openapi: 3.0.3
+info:
+  title: Book RAG Chatbot API
+  description: |
+    REST API for the Book RAG Chatbot Interface. This API powers the embedded chatbot UI
+    in the Docusaurus-published book, enabling users to ask questions and receive answers
+    strictly from book content with source references.
+
+    ## Key Features
+    - **Book-grounded answers**: All responses derived exclusively from book content
+    - **Selected text override**: Prioritizes user-highlighted passages when provided
+    - **Source transparency**: Returns matched chunks and references for every answer
+    - **Hallucination prevention**: Refuses to answer when information not found in book
+
+    ## Constitution Compliance
+    This API implements the Book RAG Chatbot Constitution (v1.0.0):
+    - Book-only knowledge (no external sources)
+    - No hallucination policy (clear refusal messages)
+    - Selected text priority (user selection takes precedence)
+    - Concise response format (1-5 sentence answers)
+
+  version: 1.0.0
+  contact:
+    name: Book RAG Chatbot Support
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.book-rag.example.com
+    description: Production server (placeholder)
+
+paths:
+  /ask:
+    post:
+      summary: Ask a question about the book
+      description: |
+        Submit a natural language question about book content and receive a grounded answer
+        with source references. Optionally provide selected text to override retrieval.
+
+        ## Behavior
+        - **Without selected_text**: Embeds question → retrieves relevant chunks from Qdrant
+          → validates retrieval → generates answer from chunks
+        - **With selected_text**: Answers only from provided text (no retrieval performed)
+
+        ## Refusal Policy
+        If the answer cannot be found in the book (or selected text), returns:
+        ```json
+        {
+          "answer": "This information is not available in the book.",
+          "sources": [],
+          "matched_chunks": [],
+          "grounded": false,
+          "retrieval_quality": null
+        }
+        ```
+
+      operationId: askQuestion
+      tags:
+        - Chatbot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AskRequest'
+            examples:
+              normalQuery:
+                summary: Normal query (with retrieval)
+                value:
+                  question: "What are the key features of ROS 2?"
+              selectedTextQuery:
+                summary: Query with selected text override
+                value:
+                  question: "Explain this passage"
+                  selected_text: "Real-time systems require deterministic behavior and bounded latency."
+
+      responses:
+        '200':
+          description: Successful response with answer and sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AskResponse'
+              examples:
+                successfulAnswer:
+                  summary: Successful answer with sources
+                  value:
+                    answer: "ROS 2 provides real-time capabilities, improved security features, and enhanced cross-platform support."
+                    sources: ["chunk-123", "chunk-456"]
+                    matched_chunks:
+                      - chunk_id: "chunk-123"
+                        text: "ROS 2 introduces several key improvements over ROS 1, including real-time capabilities..."
+                        page: 45
+                        chapter: "Chapter 3"
+                        section: "ROS 2 Overview"
+                      - chunk_id: "chunk-456"
+                        text: "Security is a major focus in ROS 2..."
+                        page: 47
+                        chapter: "Chapter 3"
+                        section: "Security Features"
+                    grounded: true
+                    retrieval_quality: "Good"
+                refusalResponse:
+                  summary: Refusal (information not in book)
+                  value:
+                    answer: "This information is not available in the book."
+                    sources: []
+                    matched_chunks: []
+                    grounded: false
+                    retrieval_quality: null
+                selectedTextResponse:
+                  summary: Answer from selected text
+                  value:
+                    answer: "Real-time systems need deterministic behavior, meaning they must respond within predictable time bounds."
+                    sources: ["selected_text"]
+                    matched_chunks:
+                      - chunk_id: "selected_text"
+                        text: "Real-time systems require deterministic behavior and bounded latency."
+                        page: null
+                        chapter: null
+                        section: null
+                    grounded: true
+                    retrieval_quality: null
+
+        '400':
+          description: Validation error (bad request)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                emptyQuestion:
+                  summary: Empty question
+                  value:
+                    detail: "Question must not be empty or whitespace only"
+                questionTooLong:
+                  summary: Question exceeds max length
+                  value:
+                    detail: "Question must be 1000 characters or less"
+                selectedTextTooLong:
+                  summary: Selected text exceeds max length
+                  value:
+                    detail: "Selected text must be 10000 characters or less"
+
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                qdrantError:
+                  summary: Vector database error
+                  value:
+                    detail: "Unable to search the book. Please try again later."
+                cohereError:
+                  summary: Embedding service error
+                  value:
+                    detail: "Unable to process your question. Please try again."
+                genericError:
+                  summary: Generic server error
+                  value:
+                    detail: "An error occurred. Please try again."
+
+        '504':
+          description: Gateway timeout (request exceeded 5 seconds)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                timeout:
+                  summary: Request timeout
+                  value:
+                    detail: "Request timed out. Please try again."
+
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Check if the API is running and healthy
+      operationId: healthCheck
+      tags:
+        - Health
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  message:
+                    type: string
+                    example: "Book RAG Chatbot API is running"
+
+components:
+  schemas:
+    AskRequest:
+      type: object
+      required:
+        - question
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: User's natural language question about the book content
+          example: "What are the key features of ROS 2?"
+        selected_text:
+          type: string
+          maxLength: 10000
+          description: |
+            Optional user-highlighted passage from the book. When provided, the system
+            answers only from this text (no retrieval performed). This takes absolute
+            priority over retrieval-based answering.
+          example: "Real-time systems require deterministic behavior and bounded latency."
+
+    ChunkReference:
+      type: object
+      required:
+        - chunk_id
+        - text
+        - page
+        - chapter
+        - section
+      properties:
+        chunk_id:
+          type: string
+          description: |
+            Unique identifier from Qdrant vector database (e.g., 'chunk-123') or
+            'selected_text' if from user selection
+          example: "chunk-123"
+        text:
+          type: string
+          maxLength: 2000
+          description: |
+            Full text of the chunk (truncated to 2000 characters if longer).
+            Contains the actual book content used to generate the answer.
+          example: "ROS 2 introduces several key improvements over ROS 1, including real-time capabilities through DDS middleware, enhanced security features with authentication and encryption, and improved cross-platform support for Windows, macOS, and embedded systems."
+        page:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: |
+            Page number in the book (1-indexed). Null for selected text or web-based content.
+          example: 45
+        chapter:
+          type: string
+          nullable: true
+          description: |
+            Chapter name or number (e.g., 'Chapter 3' or 'Introduction'). Null if not available.
+          example: "Chapter 3"
+        section:
+          type: string
+          nullable: true
+          description: |
+            Section name within the chapter (e.g., 'ROS 2 Overview'). Null if not available.
+          example: "ROS 2 Overview"
+
+    AskResponse:
+      type: object
+      required:
+        - answer
+        - sources
+        - matched_chunks
+        - grounded
+        - retrieval_quality
+      properties:
+        answer:
+          type: string
+          description: |
+            Generated answer (1-5 sentences) based on book content, or a refusal message
+            if the information is not available. Refusal message format:
+            "This information is not available in the book."
+          example: "ROS 2 provides real-time capabilities, improved security features, and enhanced cross-platform support."
+        sources:
+          type: array
+          items:
+            type: string
+          description: |
+            List of source chunk IDs used to generate the answer (e.g., ['chunk-123', 'chunk-456']).
+            Empty array if answer is a refusal. Contains 'selected_text' if from user selection.
+          example: ["chunk-123", "chunk-456"]
+        matched_chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChunkReference'
+          description: |
+            Detailed information about each chunk used in the answer. Includes full text,
+            page number, chapter, and section for source attribution and navigation.
+            Empty array if answer is a refusal.
+        grounded:
+          type: boolean
+          description: |
+            Whether the answer is grounded in book content (true) or is a refusal (false).
+            Always true for successful answers, false for "not available" responses.
+          example: true
+        retrieval_quality:
+          type: string
+          nullable: true
+          enum: ['Good', 'Partial', 'Poor', null]
+          description: |
+            Quality assessment of the retrieval results:
+            - 'Good': High-quality matches found (3+ relevant chunks)
+            - 'Partial': Some matches found but marginal quality (1-2 relevant chunks)
+            - 'Poor': Low-quality matches (no relevant chunks, triggers refusal)
+            - null: Not applicable (used for selected text queries or refusals)
+          example: "Good"
+
+    ErrorResponse:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Human-readable error message
+          example: "Question must not be empty or whitespace only"
+
+  securitySchemes: {}
+
+tags:
+  - name: Chatbot
+    description: Question answering endpoints
+  - name: Health
+    description: Service health and monitoring

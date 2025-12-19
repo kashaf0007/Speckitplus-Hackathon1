@@ -1,0 +1,20 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Book RAG Chatbot - Content Embedding Pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai-agents>=0.6.3",
+    "python-dotenv>=1.2.1",
+    "cohere>=5.13.0",
+    "qdrant-client>=1.12.0",
+    "httpx>=0.28.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.3.0",
+    "pydantic>=2.0",
+    "nltk>=3.9",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "google-generativeai>=0.3.0",
+]

@@ -92,8 +92,13 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/physical-ai/humanoid-robotics-book',
+          href: 'https://github.com/kashaf0007',
           label: 'GitHub',
+          position: 'right',
+        },
+         {
+          href: 'https://www.linkedin.com/in/kashafaman-aman-398082316?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app',
+          label: 'LinkedIn',
           position: 'right',
         },
       ],
