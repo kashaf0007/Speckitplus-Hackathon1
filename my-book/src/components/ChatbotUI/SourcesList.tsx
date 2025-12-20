@@ -5,7 +5,7 @@
  * Uses @docusaurus/router for navigation to book sections.
  */
 
-import React from 'react';
+import React, { type JSX } from 'react';
 import { useHistory } from '@docusaurus/router';
 import styles from './styles.module.css';
 import type { SourceReference } from '../../types/chatbot';
