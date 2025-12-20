@@ -25,11 +25,11 @@ QUERY_PATTERNS = {
 # Expected answer type mappings
 ANSWER_TYPES = {
     'who': ['person', 'organization', 'people', 'team', 'founder', 'creator', 'author'],
-    'what': ['thing', 'concept', 'feature', 'definition', 'item', 'product'],
+    'what': ['thing', 'concept', 'feature', 'definition', 'item', 'product', 'information'],
     'when': ['year', 'date', 'time', 'century', 'decade', 'month', 'day'],
     'where': ['location', 'place', 'city', 'country', 'region', 'area'],
     'why': ['reason', 'cause', 'purpose', 'because', 'due to', 'since'],
-    'how': ['method', 'process', 'way', 'manner', 'steps', 'procedure']
+    'how': ['method', 'process', 'way', 'manner', 'steps', 'procedure', 'information']
 }
 
 # Entity indicators for answer type matching
@@ -40,7 +40,15 @@ ENTITY_INDICATORS = {
     'location': r'\b(in|at|near|from)\s+[A-Z][a-z]+\b',
     'organization': r'\b(Inc\.|Corp\.|LLC|Ltd\.|Company|Corporation)\b',
     'reason': r'\b(because|due to|since|as a result|caused by)\b',
-    'method': r'\b(by|through|using|via|with|step 1|step 2|first|second|then)\b'
+    'method': r'\b(by|through|using|via|with|step 1|step 2|first|second|then)\b',
+    # Added for better "what is X" detection
+    'thing': r'\b(is a|is an|refers to|means|defined as|consists of|includes|provides|enables|allows)\b',
+    'concept': r'\b(is a|is an|refers to|means|defined as|describes|represents|involves)\b',
+    'definition': r'\b(is a|is an|is the|refers to|means|defined as)\b',
+    'feature': r'\b(provides|enables|allows|supports|offers|includes|has|contains)\b',
+    'item': r'\b(is a|is an|consists of|contains|includes|has)\b',
+    'product': r'\b(is a|is an|provides|offers|includes|enables|supports)\b',
+    'information': r'\b(is|are|was|were|has|have|can|will|provides|includes)\b'
 }
 
 
@@ -149,7 +157,10 @@ def check_entailment(query: str, chunk_text: str) -> bool:
     # Extract query keywords (exclude question words and common words)
     stop_words = {'what', 'when', 'where', 'who', 'why', 'how', 'is', 'are',
                   'was', 'were', 'the', 'a', 'an', 'do', 'does', 'did', 'can',
-                  'could', 'would', 'should', 'may', 'might', 'will', 'shall'}
+                  'could', 'would', 'should', 'may', 'might', 'will', 'shall',
+                  'about', 'this', 'that', 'it', 'for', 'of', 'in', 'to', 'and',
+                  'or', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'you',
+                  'me', 'my', 'your', 'tell', 'explain', 'describe'}
 
     query_words = set(re.findall(r'\b\w+\b', query.lower()))
     query_keywords = query_words - stop_words
@@ -159,8 +170,9 @@ def check_entailment(query: str, chunk_text: str) -> bool:
     keyword_matches = sum(1 for kw in query_keywords if kw in chunk_text_lower)
     overlap_ratio = keyword_matches / len(query_keywords) if query_keywords else 0
 
-    # Entailment heuristic: significant keyword overlap (>40%)
-    return overlap_ratio > 0.4
+    # Entailment heuristic: lowered threshold to 25% for better recall
+    # Also pass if at least 2 keywords match (for short queries)
+    return overlap_ratio > 0.25 or keyword_matches >= 2
 
 
 def detect_answer_presence(

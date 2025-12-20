@@ -31,7 +31,7 @@ from .logger import (
 def validate_retrieval(
     query: str,
     chunks: list[dict],
-    relevance_threshold: float = 0.3,
+    relevance_threshold: float = 0.1,  # Lowered from 0.3 for better recall
     request_id: Optional[str] = None,
     cohere_client: Optional[cohere.Client] = None,
     timeout_ms: float = 5000.0

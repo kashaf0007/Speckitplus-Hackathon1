@@ -29,24 +29,25 @@ logger = logging.getLogger(__name__)
 
 # Timeout configurations (in seconds)
 QDRANT_TIMEOUT = 10  # T051: 10s timeout for Qdrant operations
-GEMINI_TIMEOUT = 30  # T051: 30s timeout for Gemini generation (increased for retries)
+GEMINI_TIMEOUT = 60  # T051: 60s timeout for Gemini generation (increased for retries with backoff)
 COHERE_TIMEOUT = 10  # T051: 10s timeout for Cohere embedding
 
 # Retry configuration for rate limits
-MAX_RETRIES = 3
+MAX_RETRIES = 3  # Reduced retries for faster feedback
 BASE_RETRY_DELAY = 2  # Base delay in seconds for exponential backoff
 
 
 # System prompt with constraints for book-grounded answers
-SYSTEM_PROMPT = """You are a book content assistant. Answer questions using ONLY the provided context.
+SYSTEM_PROMPT = """You are a helpful book content assistant. Answer questions using the provided context.
 
-RULES:
-1. Use ONLY the context provided - no external knowledge
-2. If the answer is not in the context, say: "This information is not available in the book."
-3. Keep answers concise (1-5 sentences)
-4. Go straight to the answer - no filler phrases
+INSTRUCTIONS:
+1. Answer the question based on the provided context
+2. Keep answers concise (1-5 sentences) and informative
+3. Go straight to the answer - no filler phrases like "Based on the context..."
+4. If the context contains relevant information, provide a helpful answer
+5. Only say "This information is not available in the book." if the context truly has NO relevant information at all
 
-Answer the following question using ONLY the context provided:"""
+Answer the following question:"""
 
 
 @dataclass
@@ -101,18 +102,47 @@ class AgentOrchestrator:
             raise ValueError('GEMINI_API_KEY not configured in .env file')
 
         genai.configure(api_key=api_key)
-        # Using gemini-flash-latest (free tier with available quota)
-        self.model = genai.GenerativeModel('gemini-flash-latest')
+
+        # Try multiple models in order of preference (updated for Dec 2025 Gemini API)
+        self.model_candidates = [
+            'gemini-2.5-flash',           # Latest flash model - prioritized
+            'gemini-2.5-flash-lite',      # Lightweight version
+            'gemini-2.0-flash',           # Fallback
+            'gemini-2.0-flash-lite',      # Lightweight fallback
+            'gemini-flash-latest',        # Alias for latest flash
+        ]
+        self.model = None
+        self.model_name = None
+
+        # Initialize with first available model
+        self._initialize_model()
 
         # Generation config for controlled output
         self.generation_config = {
             'temperature': 0.1,  # Low temperature for factual, grounded responses
             'top_p': 0.95,
             'top_k': 40,
-            'max_output_tokens': 300,  # Limit for 1-5 sentences
+            'max_output_tokens': 1024,  # Increased for complete answers
         }
 
-        logger.info("AgentOrchestrator initialized with Gemini API")
+        logger.info(f"AgentOrchestrator initialized with Gemini API (model: {self.model_name})")
+
+    def _initialize_model(self):
+        """Initialize with the first available Gemini model."""
+        for model_name in self.model_candidates:
+            try:
+                self.model = genai.GenerativeModel(model_name)
+                self.model_name = model_name
+                logger.info(f"Successfully initialized Gemini model: {model_name}")
+                return
+            except Exception as e:
+                logger.warning(f"Model {model_name} unavailable: {e}")
+                continue
+
+        # Fallback to default if none work during init
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model_name = 'gemini-1.5-flash'
+        logger.warning("Using default model gemini-1.5-flash")
 
     def prepare_context(
         self,
@@ -192,6 +222,7 @@ class AgentOrchestrator:
             raise NoAnswerFoundError("No relevant content found")
 
         # Step 3: Validate retrieval (if validator provided) (T049: track timing)
+        # NOTE: Validation is now advisory only - we always proceed if we have chunks
         validation_result = None
         if validator:
             validation_start = time.time()
@@ -200,11 +231,10 @@ class AgentOrchestrator:
                 latency_metrics.validation_time_ms = (time.time() - validation_start) * 1000
                 logger.info(f"[{question_hash}] Validation: answer_present={validation_result.get('answer_present')}, quality={validation_result.get('retrieval_quality')}, time: {latency_metrics.validation_time_ms:.0f}ms")
 
+                # Always proceed if we have search results - let the LLM decide
+                # The LLM will say "not available" if it can't find the answer
                 if not validation_result.get('answer_present', False):
-                    logger.warning(f"[{question_hash}] Validation: answer not present in retrieved chunks")
-                    raise NoAnswerFoundError("Answer not found in retrieved content")
-            except NoAnswerFoundError:
-                raise
+                    logger.info(f"[{question_hash}] Validation uncertain, but proceeding with {len(search_result)} chunks - LLM will decide")
             except Exception as e:
                 logger.warning(f"[{question_hash}] Validation error (proceeding anyway): {e}")
                 validation_result = None
@@ -349,29 +379,51 @@ class AgentOrchestrator:
             # Use asyncio.to_thread for non-blocking execution of sync Gemini call
             async def generate_with_retry():
                 last_exception = None
-                for attempt in range(MAX_RETRIES):
-                    try:
-                        return await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.model.generate_content,
-                                prompt,
-                                generation_config=self.generation_config
-                            ),
-                            timeout=GEMINI_TIMEOUT
-                        )
-                    except ResourceExhausted as e:
-                        last_exception = e
-                        # Extract retry delay from error if available, otherwise use exponential backoff
-                        retry_delay = BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
-                        logger.warning(f"[{question_hash}] Rate limit hit (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {retry_delay:.1f}s")
-                        await asyncio.sleep(retry_delay)
-                    except asyncio.TimeoutError:
-                        logger.error(f"[{question_hash}] Gemini generation timed out after {GEMINI_TIMEOUT}s")
-                        raise TimeoutError(f"Answer generation timed out after {GEMINI_TIMEOUT} seconds")
 
-                # All retries exhausted
-                logger.error(f"[{question_hash}] Rate limit exceeded after {MAX_RETRIES} retries")
-                raise last_exception
+                # Try each model candidate
+                for model_name in self.model_candidates:
+                    try:
+                        current_model = genai.GenerativeModel(model_name)
+                        logger.info(f"[{question_hash}] Trying model: {model_name}")
+
+                        for attempt in range(MAX_RETRIES):
+                            try:
+                                return await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        current_model.generate_content,
+                                        prompt,
+                                        generation_config=self.generation_config
+                                    ),
+                                    timeout=GEMINI_TIMEOUT
+                                )
+                            except ResourceExhausted as e:
+                                last_exception = e
+                                # Extract retry delay from error if available, otherwise use exponential backoff
+                                retry_delay = BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                                logger.warning(f"[{question_hash}] Rate limit hit on {model_name} (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {retry_delay:.1f}s")
+                                await asyncio.sleep(retry_delay)
+                            except asyncio.TimeoutError:
+                                logger.error(f"[{question_hash}] Gemini generation timed out after {GEMINI_TIMEOUT}s")
+                                raise TimeoutError(f"Answer generation timed out after {GEMINI_TIMEOUT} seconds")
+                            except Exception as e:
+                                error_str = str(e).lower()
+                                # If model not found, try next model
+                                if "not found" in error_str or "not supported" in error_str or "404" in str(e):
+                                    logger.warning(f"[{question_hash}] Model {model_name} not available: {e}")
+                                    break  # Try next model
+                                last_exception = e
+                                retry_delay = BASE_RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                                logger.warning(f"[{question_hash}] API error on {model_name} (attempt {attempt + 1}/{MAX_RETRIES}): {e}, retrying in {retry_delay:.1f}s")
+                                await asyncio.sleep(retry_delay)
+
+                    except Exception as e:
+                        logger.warning(f"[{question_hash}] Failed to use model {model_name}: {e}")
+                        last_exception = e
+                        continue
+
+                # All models and retries exhausted
+                logger.error(f"[{question_hash}] All Gemini models failed. Last error: {last_exception}")
+                raise ValueError(f"All Gemini models exhausted. API quota may be exceeded. Please try again later or check your API quota at https://aistudio.google.com/")
 
             try:
                 response = await generate_with_retry()

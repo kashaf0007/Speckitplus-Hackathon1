@@ -72,6 +72,14 @@ function classifyError(error: any, response?: Response): ClassifiedError {
       };
     }
 
+    if (response.status === 503) {
+      return {
+        type: ErrorType.SERVER_ERROR,
+        message: 'AI service temporarily unavailable. Please try again in a few minutes.',
+        originalError: error,
+      };
+    }
+
     if (response.status >= 500) {
       return {
         type: ErrorType.SERVER_ERROR,

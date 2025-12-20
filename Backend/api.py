@@ -367,13 +367,24 @@ async def ask(request: AskRequest):
                 f"latency={duration_ms:.0f}ms"
             )
 
+            # Reset rate limit on successful request (clear any previous 429 state)
+            rate_limiter.reset_rate_limit()
+
             return AskResponse(**result)
 
         except Exception as e:
             logger.error(f"Answer generation error: {e}", exc_info=True)
-            # Check for rate limit / quota exceeded errors
             error_str = str(e).lower()
-            if "429" in str(e) or "quota" in error_str or "rate" in error_str or "resourceexhausted" in error_str:
+
+            # Check for quota exhausted / all models failed
+            if "exhausted" in error_str or "quota" in error_str:
+                raise HTTPException(
+                    status_code=503,
+                    detail="AI service temporarily unavailable. The API quota may be exceeded. Please try again later or check https://aistudio.google.com/ for your quota status."
+                )
+
+            # Check for rate limit / quota exceeded errors (but NOT 404 model not found)
+            if ("429" in str(e) or "resourceexhausted" in error_str) and "404" not in str(e):
                 # Mark rate limiter as limited to prevent further requests
                 rate_limiter = get_rate_limiter()
                 # Extract retry delay if available, default to 60 seconds
@@ -392,6 +403,7 @@ async def ask(request: AskRequest):
                     status_code=429,
                     detail="API rate limit exceeded. Please wait a moment and try again."
                 )
+
             raise HTTPException(
                 status_code=500,
                 detail="Unable to generate answer. Please try again."
@@ -455,6 +467,74 @@ async def rate_limit_status():
     """
     rate_limiter = get_rate_limiter()
     return rate_limiter.get_status()
+
+
+@app.post("/rate-limit-reset", response_model=dict, tags=["health"], summary="Reset rate limiter")
+async def rate_limit_reset():
+    """
+    Reset the rate limiter state.
+
+    Use this endpoint to clear the rate-limited state after waiting.
+    """
+    rate_limiter = get_rate_limiter()
+    rate_limiter.reset_rate_limit()
+    return {"status": "ok", "message": "Rate limit reset successfully"}
+
+
+@app.get("/test-gemini", response_model=dict, tags=["health"], summary="Test Gemini API connection")
+async def test_gemini():
+    """
+    Test if Gemini API is working correctly.
+    Makes a simple API call to verify connectivity and quota.
+    """
+    import google.generativeai as genai
+    import os
+
+    try:
+        api_key = os.getenv('GEMINI_API_KEY')
+        genai.configure(api_key=api_key)
+
+        # First, list available models
+        available_models = []
+        try:
+            for m in genai.list_models():
+                if 'generateContent' in [method.name for method in m.supported_generation_methods]:
+                    available_models.append(m.name)
+        except Exception as e:
+            logger.warning(f"Could not list models: {e}")
+
+        # Try different models to find one that works
+        models_to_try = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro', 'gemini-1.5-pro-latest', 'gemini-1.0-pro']
+
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content("Say 'Hello' in one word.")
+                return {
+                    "status": "ok",
+                    "model": model_name,
+                    "response": response.text[:100] if response.text else "No response",
+                    "message": f"Gemini API working with {model_name}",
+                    "available_models": available_models[:10]  # First 10
+                }
+            except Exception as e:
+                logger.warning(f"Model {model_name} failed: {e}")
+                continue
+
+        return {
+            "status": "error",
+            "message": "All Gemini models failed. You may have exceeded your API quota.",
+            "suggestion": "Check your Gemini API quota at https://aistudio.google.com/",
+            "available_models": available_models[:10]
+        }
+
+    except Exception as e:
+        logger.error(f"Gemini test failed: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "suggestion": "Check your GEMINI_API_KEY in .env file"
+        }
 
 
 @app.get("/stats", response_model=dict, tags=["health"], summary="Get Qdrant collection statistics")
