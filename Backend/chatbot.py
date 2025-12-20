@@ -307,6 +307,5 @@ def main():
     print("\n\nStarting interactive mode...\n")
     interactive_chatbot()
 
-
 if __name__ == "__main__":
     main()
