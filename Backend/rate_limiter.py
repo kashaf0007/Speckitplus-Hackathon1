@@ -18,12 +18,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RateLimitConfig:
     """Configuration for rate limiting."""
-    # Gemini free tier: 20 requests per day, but also has per-minute limits
-    requests_per_minute: int = 10  # Conservative limit
-    requests_per_day: int = 20  # Free tier daily limit
-    min_request_interval: float = 3.0  # Minimum seconds between requests
-    max_queue_size: int = 5  # Max pending requests in queue
-    queue_timeout: float = 30.0  # Max wait time in queue (seconds)
+    # Gemini free tier limits for gemini-1.5-flash:
+    # - 15 RPM (requests per minute)
+    # - 1 million TPM (tokens per minute)
+    # - 1500 RPD (requests per day)
+    requests_per_minute: int = 15  # Conservative limit
+    requests_per_day: int = 1500  # Free tier daily limit for gemini-1.5-flash
+    min_request_interval: float = 1.0  # Reduced to 1 second for better UX (15 RPM allows this)
+    max_queue_size: int = 10  # Max pending requests in queue
+    queue_timeout: float = 30.0  # Reduced timeout for faster feedback
 
 
 class RateLimiter:
@@ -81,11 +84,17 @@ class RateLimiter:
             "queue_size": len(self._queue),
         }
 
-    def mark_rate_limited(self, retry_after_seconds: float = 60.0):
+    def mark_rate_limited(self, retry_after_seconds: float = 15.0):
         """Mark as rate limited (called when 429 is received)."""
         self._is_rate_limited = True
         self._rate_limit_reset_time = time.time() + retry_after_seconds
         logger.warning(f"Rate limited! Will reset in {retry_after_seconds}s")
+
+    def reset_rate_limit(self):
+        """Manually reset rate limit state (useful after successful request)."""
+        self._is_rate_limited = False
+        self._rate_limit_reset_time = None
+        logger.info("Rate limit state reset")
 
     def _can_make_request(self) -> tuple[bool, Optional[str], Optional[float]]:
         """

@@ -24,7 +24,7 @@ interface ChatbotToggleProps {
  * Renders as circular button with chat icon.
  * Supports keyboard accessibility (Enter/Space to activate).
  */
-export function ChatbotToggle({ isOpen, onToggle }: ChatbotToggleProps): JSX.Element {
+export function ChatbotToggle({ isOpen, onToggle }: ChatbotToggleProps): React.ReactElement {
   // Hide toggle when panel is open
   if (isOpen) {
     return null;
