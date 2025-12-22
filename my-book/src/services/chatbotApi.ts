@@ -9,7 +9,12 @@
 
 import type { AskRequest, AskResponse } from '../types/chatbot';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Use Railway production URL, fallback to localhost for development
+const API_BASE_URL =
+  typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+    ? 'https://speckitplus-backend-production.up.railway.app'
+    : 'http://localhost:8000';
+
 const REQUEST_TIMEOUT = 60000; // 60 seconds - increased for slow API calls
 
 /**

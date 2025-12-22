@@ -137,7 +137,6 @@ def assess_retrieval_quality(
 
     return quality, reasoning
 
-
 def assess_quality_with_thresholds(
     all_assessments: list[RelevanceAssessment],
     answer_present: bool,

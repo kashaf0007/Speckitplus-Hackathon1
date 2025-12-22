@@ -18,6 +18,84 @@ import type {
 } from '../types/chatbot';
 
 /**
+ * Map chapter titles to their actual doc paths
+ * These must match the folder structure in my-book/docs/
+ */
+const CHAPTER_PATH_MAP: Record<string, string> = {
+  // Chapter 1 variations
+  'chapter 1': 'chapter-1-introduction',
+  'chapter 1: introduction to physical ai': 'chapter-1-introduction',
+  'introduction to physical ai': 'chapter-1-introduction',
+  'introduction': 'chapter-1-introduction',
+
+  // Chapter 2 variations
+  'chapter 2': 'chapter-2-ros2',
+  'chapter 2: ros 2 fundamentals': 'chapter-2-ros2',
+  'chapter 2: the robotic nervous system (ros 2)': 'chapter-2-ros2',
+  'ros 2 fundamentals': 'chapter-2-ros2',
+  'ros2 fundamentals': 'chapter-2-ros2',
+
+  // Chapter 3 variations
+  'chapter 3': 'chapter-3-simulation',
+  'chapter 3: simulation (gazebo & unity)': 'chapter-3-simulation',
+  'chapter 3: simulation': 'chapter-3-simulation',
+  'simulation (gazebo & unity)': 'chapter-3-simulation',
+
+  // Chapter 4 variations
+  'chapter 4': 'chapter-4-isaac',
+  'chapter 4: isaac sim': 'chapter-4-isaac',
+  'chapter 4: nvidia isaac': 'chapter-4-isaac',
+  'isaac sim': 'chapter-4-isaac',
+  'nvidia isaac': 'chapter-4-isaac',
+
+  // Chapter 5 variations
+  'chapter 5': 'chapter-5-vla',
+  'chapter 5: vision-language-action': 'chapter-5-vla',
+  'chapter 5: vision-language-action systems': 'chapter-5-vla',
+  'vision-language-action': 'chapter-5-vla',
+  'vision-language-action systems': 'chapter-5-vla',
+
+  // Chapter 6 variations
+  'chapter 6': 'chapter-6-capstone',
+  'chapter 6: capstone': 'chapter-6-capstone',
+  'chapter 6: capstone project': 'chapter-6-capstone',
+  'capstone': 'chapter-6-capstone',
+  'capstone project': 'chapter-6-capstone',
+};
+
+/**
+ * Get the correct doc path for a chapter title
+ */
+function getChapterPath(chapter: string): string {
+  const normalizedChapter = chapter.toLowerCase().trim();
+
+  // Check for exact match first
+  if (CHAPTER_PATH_MAP[normalizedChapter]) {
+    return CHAPTER_PATH_MAP[normalizedChapter];
+  }
+
+  // Check for partial matches
+  for (const [key, path] of Object.entries(CHAPTER_PATH_MAP)) {
+    if (normalizedChapter.includes(key) || key.includes(normalizedChapter)) {
+      return path;
+    }
+  }
+
+  // Fallback to slugify for unknown chapters
+  return chapter.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+/**
+ * Slugify text for URL anchor
+ */
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+/**
  * Chat context with default values
  */
 const ChatbotContext = createContext<ChatbotContextType | undefined>(undefined);
@@ -108,8 +186,8 @@ export function ChatbotProvider({ children }: ChatbotProviderProps): JSX.Element
           return {
             chunkId: sourceId,
             label,
-            path: chunk?.chapter ? `/docs/${chunk.chapter.toLowerCase().replace(/\s+/g, '-')}` : undefined,
-            anchor: chunk?.section ? chunk.section.toLowerCase().replace(/\s+/g, '-') : undefined,
+            path: chunk?.chapter ? `/docs/${getChapterPath(chunk.chapter)}` : undefined,
+            anchor: chunk?.section ? slugify(chunk.section) : undefined,
           };
         });
 
